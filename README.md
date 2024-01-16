@@ -6,8 +6,6 @@ InRiver extensions to send data over to Occtoo.
 * SendToOcctooExtension - Picks up the stored Connector states and transforms into documents and sends over to Occtoo
 * FullExport - Scheduled extension that only runs when manually triggered to export all data to Occtoo
 
-**NOTE!
-This extension is created to be used by many customers so special cases should be placed in ExtractExceptionalFields and controlled via the settings**
 ---
 ## How it works
 Generic importer is assumed to become universal tool for importing data from inRiver into Occtoo. Basic idea is to control creation of datasources and their structure through json configuration file.
