@@ -12,7 +12,7 @@ This extension is created to be used by many customers so special cases should b
 ## How it works
 Generic importer is assumed to become universal tool for importing data from inRiver into Occtoo. Basic idea is to control creation of datasources and their structure through json configuration file.
 
-Information on how to create the settings can be found in the [Instructions.docx](./doc/Instructions.docx) documentation. And the Debugger prodject holds a [ClientSettingsExample.cs](src/Occtoo.InRiver.Debugger\Settings\Clients\ClientSettingsExample.cs) file with and example settings setup.
+Information on how to create the settings can be found in the [Instructions.docx](./doc/Instructions.docx) documentation. And the Debugger prodject holds a [ClientSettingsExample.cs](src/Occtoo.InRiver.Debugger/Settings/Clients/ClientSettingsExample.cs) file with and example settings setup.
 
 ---
 ## Test
