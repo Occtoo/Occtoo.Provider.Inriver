@@ -146,6 +146,11 @@ namespace Occtoo.Generic.Inriver
                     {
                         entity = Context.ExtensionManager.DataService.GetEntity(entityListenerData.Entity.Id, LoadLevel.DataOnly);
                     }
+                    if(entity == null)
+                    {
+                        Context.Log(LogLevel.Information, $"EntityListenerEvent handling hickup entity {entityListenerData.Entity.Id} doesn't exist, event skipped");
+                        continue;
+                    }
                     switch (entityListenerData.Event)
                     {
                         case Constants.ConnectorState.EntityCreated:

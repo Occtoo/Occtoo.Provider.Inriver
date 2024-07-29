@@ -86,12 +86,24 @@ namespace Occtoo.Generic.Inriver.Services
             if (updateSource)
             {
                 var entity = _context.ExtensionManager.DataService.GetEntity(sourceId, LoadLevel.DataOnly);
+                if (entity == null)
+                {
+                    _context.Log(LogLevel.Information, $"LinkChange handling hickup entity {sourceId} doesn't exist, event skipped");
+                    return results;
+                }
+
                 results.AddRange(EntityChanged(entity, entity.Id, new List<string>()));
             }
 
             if (updateTarget)
             {
                 var entity = _context.ExtensionManager.DataService.GetEntity(targetId, LoadLevel.DataOnly);
+                if(entity == null)
+                {
+                    _context.Log(LogLevel.Information, $"LinkChange handling hickup entity {targetId} doesn't exist, event skipped");
+                    return results;
+                }
+
                 results.AddRange(EntityChanged(entity, entity.Id, new List<string>()));
             }
 
