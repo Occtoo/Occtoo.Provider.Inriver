@@ -109,10 +109,17 @@ namespace Occtoo.Generic.Inriver.Services
                 MergePartialEntities(entity, settings, dynamicEntitiesList);
 
                 var documents = new List<DynamicEntity>();
+                var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var dynamicEntity in dynamicEntitiesList)
                 {
                     var id = GetDocumentId(entity, settings, dynamicEntity);
                     if (string.IsNullOrEmpty(id)) continue;
+
+                    if (!seenKeys.Add(id))
+                    {
+                        _context.Log(LogLevel.Warning, $"Skipping duplicate document with key '{id}' for entity {entity.Id} ({settings.Name}) to avoid sending it twice.");
+                        continue;
+                    }
 
                     dynamicEntity.Key = id;
                     dynamicEntity.Properties.Add(ValueHelpers.GetValue("Modified", entityParentsModified, string.Empty));
@@ -509,9 +516,11 @@ namespace Occtoo.Generic.Inriver.Services
                     var children = _context.ExtensionManager.GetChildEntities(entity, childMerge.Link);
                     foreach (var child in children)
                     {
+                        _context.Log(LogLevel.Debug, $"Processing child entity with id: {child.Id} and type: {child.EntityType.Id}, looking for DataSource: {childMerge.DataSource}. Available entity settings: {string.Join(", ", _settings.ExportSettings.Entities.Select(f => $"{f.Name}/{f.DataSource}"))}");
+
                         var childSettings = _settings.ExportSettings.Entities.First(x =>
-                            x.Name == child.EntityType.Id && x.DataSource == dataSource);
-                        var childResponse = GetChildrenDocuments(child, baseDocument, childSettings, dataSource, ref created, ref modified);
+                            x.Name == child.EntityType.Id && x.DataSource == childMerge.DataSource);
+                        var childResponse = GetChildrenDocuments(child, baseDocument, childSettings, childMerge.DataSource, ref created, ref modified);
 
                         var childrenList = new List<DynamicEntity>();
                         foreach (var childRes in childResponse)
