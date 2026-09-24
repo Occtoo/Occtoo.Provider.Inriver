@@ -509,9 +509,11 @@ namespace Occtoo.Generic.Inriver.Services
                     var children = _context.ExtensionManager.GetChildEntities(entity, childMerge.Link);
                     foreach (var child in children)
                     {
+                        _context.Log(LogLevel.Debug, $"Processing child entity with id: {child.Id} and type: {child.EntityType.Id}, looking for DataSource: {childMerge.DataSource}. Available entity settings: {string.Join(", ", _settings.ExportSettings.Entities.Select(f => $"{f.Name}/{f.DataSource}"))}");
+
                         var childSettings = _settings.ExportSettings.Entities.First(x =>
-                            x.Name == child.EntityType.Id && x.DataSource == dataSource);
-                        var childResponse = GetChildrenDocuments(child, baseDocument, childSettings, dataSource, ref created, ref modified);
+                            x.Name == child.EntityType.Id && x.DataSource == childMerge.DataSource);
+                        var childResponse = GetChildrenDocuments(child, baseDocument, childSettings, childMerge.DataSource, ref created, ref modified);
 
                         var childrenList = new List<DynamicEntity>();
                         foreach (var childRes in childResponse)
