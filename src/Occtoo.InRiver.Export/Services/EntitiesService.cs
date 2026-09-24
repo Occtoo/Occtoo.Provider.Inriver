@@ -109,10 +109,17 @@ namespace Occtoo.Generic.Inriver.Services
                 MergePartialEntities(entity, settings, dynamicEntitiesList);
 
                 var documents = new List<DynamicEntity>();
+                var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var dynamicEntity in dynamicEntitiesList)
                 {
                     var id = GetDocumentId(entity, settings, dynamicEntity);
                     if (string.IsNullOrEmpty(id)) continue;
+
+                    if (!seenKeys.Add(id))
+                    {
+                        _context.Log(LogLevel.Warning, $"Skipping duplicate document with key '{id}' for entity {entity.Id} ({settings.Name}) to avoid sending it twice.");
+                        continue;
+                    }
 
                     dynamicEntity.Key = id;
                     dynamicEntity.Properties.Add(ValueHelpers.GetValue("Modified", entityParentsModified, string.Empty));
