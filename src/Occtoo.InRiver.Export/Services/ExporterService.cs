@@ -22,17 +22,22 @@ namespace Occtoo.Generic.Inriver.Services
 
     public class ExporterService : IExporterService
     {
+        private const int DocumentsBatchSize = 500;
+
         private readonly inRiverContext _context;
         private readonly Settings _settings;
         private readonly IEntitiesService _entitiesService;
+        private readonly IDocumentsService _documentsService;
 
         public ExporterService(inRiverContext context,
             Settings settings,
-            IEntitiesService entitiesService)
+            IEntitiesService entitiesService,
+            IDocumentsService documentsService)
         {
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _entitiesService = entitiesService ?? throw new ArgumentNullException(nameof(entitiesService));
+            _documentsService = documentsService ?? throw new ArgumentNullException(nameof(documentsService));
         }
 
         public List<(DynamicEntity Document, string Type, string EntitySystemIdAlias)> EntityChanged(Entity entity, int initiatorId, IEnumerable<string> fields, bool deleted = false)
@@ -112,22 +117,30 @@ namespace Occtoo.Generic.Inriver.Services
 
         public void FullExport()
         {
+            // Documents waiting to be sent, per data source, for the whole run
+            var dataSources = new Dictionary<string, DataSourceDocuments>();
+
             var mediaEntityTypes = _settings.ExportSettings.Entities
                 .Where(x => x.ParentsMerges.All(m => m.Type != MergeType.Full) && x.Type == EntityType.Media && !x.SkipInFullExport)
                 .Select(x => x.Name).Distinct();
-            ExportEntityTypes(mediaEntityTypes);
+            ExportEntityTypes(mediaEntityTypes, dataSources);
 
             var skuEntityTypes = _settings.ExportSettings.Entities.Where(x => x.Type == EntityType.Sku && !x.SkipInFullExport)
                 .Select(x => x.Name).Distinct();
-            ExportEntityTypes(skuEntityTypes);
+            ExportEntityTypes(skuEntityTypes, dataSources);
 
             var baseEntities = _settings.ExportSettings.Entities
                 .Where(x => x.ParentsMerges.All(m => m.Type != MergeType.Full) && x.Type == EntityType.Entity && !x.SkipInFullExport)
                 .Select(x => x.Name).Distinct();
-            ExportEntityTypes(baseEntities);
+            ExportEntityTypes(baseEntities, dataSources);
+
+            foreach (var dataSource in dataSources)
+            {
+                _context.Log(LogLevel.Information, $"Occtoo full export - data source: {dataSource.Key} - sent documents: {dataSource.Value.Sent} - failed documents: {dataSource.Value.Failed} - skipped repeated documents: {dataSource.Value.Skipped}");
+            }
         }
 
-        private void ExportEntityTypes(IEnumerable<string> entityTypes)
+        private void ExportEntityTypes(IEnumerable<string> entityTypes, Dictionary<string, DataSourceDocuments> dataSources)
         {
             foreach (var entityType in entityTypes)
             {
@@ -137,13 +150,73 @@ namespace Occtoo.Generic.Inriver.Services
                     try
                     {
                         _context.Log(LogLevel.Information, $"Occtoo full export - entity type: {entityType} - id: {entity.Id}");
-                        EntityChanged(entity, entity.Id, new List<string>());
+                        var documents = EntityChanged(entity, entity.Id, new List<string>());
+                        AddDocuments(documents, dataSources);
                     }
                     catch (Exception ex)
                     {
                         _context.Log(LogLevel.Error, $"Occtoo - Full Export - Error while exporting entity: {entity.Id}", ex);
                     }
                 }
+
+                foreach (var dataSource in dataSources.Where(x => x.Value.Documents.Any()))
+                {
+                    SendDocuments(dataSource.Key, dataSource.Value);
+                }
+            }
+        }
+
+        private void AddDocuments(List<(DynamicEntity Document, string Type, string EntitySystemIdAlias)> documents, Dictionary<string, DataSourceDocuments> dataSources)
+        {
+            foreach (var document in documents)
+            {
+                if (!dataSources.TryGetValue(document.Type, out var dataSource))
+                {
+                    dataSource = new DataSourceDocuments();
+                    dataSources.Add(document.Type, dataSource);
+                }
+
+                // UpdateParentsOnChange builds the same parent document once for every child, send it only once
+                if (!string.IsNullOrEmpty(document.Document.Key) && !dataSource.Keys.Add(document.Document.Key))
+                {
+                    dataSource.Skipped++;
+                    continue;
+                }
+
+                if (!dataSource.Documents.Any())
+                {
+                    dataSource.EntitySystemIdAlias = document.EntitySystemIdAlias;
+                }
+
+                dataSource.Documents.Add(document.Document);
+                if (dataSource.Documents.Count >= DocumentsBatchSize)
+                {
+                    SendDocuments(document.Type, dataSource);
+                }
+            }
+        }
+
+        private void SendDocuments(string dataSourceName, DataSourceDocuments dataSource)
+        {
+            var documents = dataSource.Documents.ToList();
+            dataSource.Documents.Clear();
+
+            try
+            {
+                var failedIds = _documentsService.SendDocuments(dataSourceName, documents, dataSource.EntitySystemIdAlias).ToList();
+                if (failedIds.Any())
+                {
+                    dataSource.Failed += documents.Count;
+                    _context.Log(LogLevel.Error, $"Occtoo - Full Export - Error while sending {documents.Count} documents to data source: {dataSourceName} - entity ids: {string.Join(", ", failedIds)}");
+                    return;
+                }
+
+                dataSource.Sent += documents.Count;
+            }
+            catch (Exception ex)
+            {
+                dataSource.Failed += documents.Count;
+                _context.Log(LogLevel.Error, $"Occtoo - Full Export - Error while sending {documents.Count} documents to data source: {dataSourceName}", ex);
             }
         }
 
@@ -335,6 +408,23 @@ namespace Occtoo.Generic.Inriver.Services
                 if (field == null || field.IsEmpty() || deleteKeyProps.ContainsKey(fieldId)) continue;
                 deleteKeyProps.Add(fieldId, field.Data.ToString());
             }
+        }
+
+        private class DataSourceDocuments
+        {
+            // Documents waiting for the next batch
+            public List<DynamicEntity> Documents { get; } = new List<DynamicEntity>();
+
+            // Keys already sent or waiting to be sent during this full export
+            public HashSet<string> Keys { get; } = new HashSet<string>(StringComparer.Ordinal);
+
+            public string EntitySystemIdAlias { get; set; }
+
+            public int Sent { get; set; }
+
+            public int Failed { get; set; }
+
+            public int Skipped { get; set; }
         }
     }
 }
