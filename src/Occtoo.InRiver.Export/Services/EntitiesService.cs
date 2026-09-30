@@ -117,8 +117,7 @@ namespace Occtoo.Generic.Inriver.Services
 
                     if (!seenKeys.Add(id))
                     {
-                        _context.Log(LogLevel.Warning, $"Skipping duplicate document with key '{id}' for entity {entity.Id} ({settings.Name}) to avoid sending it twice.");
-                        continue;
+                        _context.Log(LogLevel.Error, $"Occtoo settings error: entity '{settings.Name}' in data source '{settings.DataSource}' produced more than one document with key '{id}' (entity {entity.Id}). UniqueIdFields ({string.Join(", ", settings.UniqueIdFields)}) must identify each document; with Full children merges, key on a unique field of the merged child.");
                     }
 
                     dynamicEntity.Key = id;
@@ -516,11 +515,15 @@ namespace Occtoo.Generic.Inriver.Services
                     var children = _context.ExtensionManager.GetChildEntities(entity, childMerge.Link);
                     foreach (var child in children)
                     {
-                        _context.Log(LogLevel.Debug, $"Processing child entity with id: {child.Id} and type: {child.EntityType.Id}, looking for DataSource: {childMerge.DataSource}. Available entity settings: {string.Join(", ", _settings.ExportSettings.Entities.Select(f => $"{f.Name}/{f.DataSource}"))}");
+                        var childSettings = _settings.ExportSettings.Entities.FirstOrDefault(x =>
+                            x.Name == child.EntityType.Id && x.DataSource == dataSource);
+                        if (childSettings == null)
+                        {
+                            _context.Log(LogLevel.Error, $"Occtoo settings error: entity '{settings.Name}' in data source '{dataSource}' has a Full children merge on link '{childMerge.Link}' (DataSource '{childMerge.DataSource}'), but there is no '{child.EntityType.Id}' entity setting with DataSource '{dataSource}'. Full merges flatten into one data source: add a '{child.EntityType.Id}' entity setting with DataSource '{dataSource}' and set the merge's DataSource to '{dataSource}'. No document was built for child entity {child.Id}.");
+                            continue;
+                        }
 
-                        var childSettings = _settings.ExportSettings.Entities.First(x =>
-                            x.Name == child.EntityType.Id && x.DataSource == childMerge.DataSource);
-                        var childResponse = GetChildrenDocuments(child, baseDocument, childSettings, childMerge.DataSource, ref created, ref modified);
+                        var childResponse = GetChildrenDocuments(child, baseDocument, childSettings, dataSource, ref created, ref modified);
 
                         var childrenList = new List<DynamicEntity>();
                         foreach (var childRes in childResponse)
