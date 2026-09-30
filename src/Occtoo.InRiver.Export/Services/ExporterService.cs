@@ -266,6 +266,11 @@ namespace Occtoo.Generic.Inriver.Services
                 {
                     if (parentMerge.Type != MergeType.Full) continue;
 
+                    if (parentMerge.DataSource != settings.DataSource)
+                    {
+                        _context.Log(LogLevel.Error, $"Occtoo settings error: entity '{settings.Name}' in data source '{settings.DataSource}' has a Full parents merge on link '{parentMerge.Link}' with DataSource '{parentMerge.DataSource}'. Full merges flatten into one data source: set the merge's DataSource to '{settings.DataSource}' and add a '{parentMerge.Name}' entity setting with DataSource '{settings.DataSource}'.");
+                    }
+
                     var parents = _context.ExtensionManager.GetParentEntities(entity, parentMerge.Link);
 
                     if (delete && !parents.Any())
@@ -290,6 +295,7 @@ namespace Occtoo.Generic.Inriver.Services
 
                         if (!parentEntitySettings.Any())
                         {
+                            _context.Log(LogLevel.Error, $"Occtoo settings error: entity '{settings.Name}' in data source '{settings.DataSource}' has a Full parents merge on link '{parentMerge.Link}', but there is no '{parent.EntityType.Id}' entity setting with DataSource '{parentMerge.DataSource}'. Add that entity setting or change the merge's Type. Entity {entity.Id} was not exported through parent {parent.Id}.");
                             response.Add(new EntityParents { IsTreeCompleted = false });
                             continue;
                         }
