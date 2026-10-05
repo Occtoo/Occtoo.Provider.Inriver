@@ -134,14 +134,16 @@ namespace Occtoo.Generic.Inriver.Services
                 .Select(x => x.Name).Distinct();
             ExportEntityTypes(baseEntities, dataSources);
 
-            // Types with a Full parents merge are exported through their parents above,
-            // this pass only picks up the entities ExportWithoutFullParents exports on their own
+            // Types with a Full parents merge are exported through their parents above. For the
+            // ExportWithoutFullParents types, this pass exports the entities no root type above reached:
+            // the ones without a parent, and all of them when the parent types are skipped
+            var rootEntityTypes = new HashSet<string>(mediaEntityTypes.Concat(skuEntityTypes).Concat(baseEntities));
             var withoutParentsEntityTypes = _settings.ExportSettings.Entities
                 .Where(x => x.ExportWithoutFullParents && x.ParentsMerges.Any(m => m.Type == MergeType.Full) && x.Type != EntityType.Sku && !x.SkipInFullExport)
                 .Select(x => x.Name).Distinct()
-                .Except(mediaEntityTypes)
-                .Except(baseEntities);
-            ExportEntityTypes(withoutParentsEntityTypes, dataSources, HasNoFullParents);
+                .Where(x => !rootEntityTypes.Contains(x));
+            ExportEntityTypes(withoutParentsEntityTypes, dataSources, entity => !IsReachedThroughRoots(entity.Id,
+                _settings.ExportSettings.Entities.Where(x => x.Name == entity.EntityType.Id), rootEntityTypes));
 
             foreach (var dataSource in dataSources)
             {
@@ -180,13 +182,37 @@ namespace Occtoo.Generic.Inriver.Services
             }
         }
 
-        private bool HasNoFullParents(Entity entity)
+        // Whether a Full parents chain from the entity ends in a root type, so the full export already exported it through that root
+        private bool IsReachedThroughRoots(int entityId, IEnumerable<EntitySettings> entitySettings, ICollection<string> rootEntityTypes)
         {
-            return _settings.ExportSettings.Entities
-                .Where(x => x.Name == entity.EntityType.Id && x.ExportWithoutFullParents)
-                .Any(x => x.ParentsMerges
-                    .Where(m => m.Type == MergeType.Full)
-                    .All(m => !_context.ExtensionManager.DataService.GetInboundLinksForEntityAndLinkType(entity.Id, m.Link).Any()));
+            if (!rootEntityTypes.Any())
+            {
+                return false;
+            }
+
+            foreach (var parentMerge in entitySettings.SelectMany(x => x.ParentsMerges).Where(m => m.Type == MergeType.Full))
+            {
+                var parentIds = _context.ExtensionManager.DataService.GetInboundLinksForEntityAndLinkType(entityId, parentMerge.Link)
+                    .Select(x => x.Source.Id).ToList();
+                if (!parentIds.Any())
+                {
+                    continue;
+                }
+
+                if (rootEntityTypes.Contains(parentMerge.Name))
+                {
+                    return true;
+                }
+
+                var parentSettings = _settings.ExportSettings.Entities
+                    .Where(x => x.Name == parentMerge.Name && x.DataSource == parentMerge.DataSource).ToList();
+                if (parentIds.Any(parentId => IsReachedThroughRoots(parentId, parentSettings, rootEntityTypes)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void AddDocuments(List<(DynamicEntity Document, string Type, string EntitySystemIdAlias)> documents, Dictionary<string, DataSourceDocuments> dataSources)
