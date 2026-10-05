@@ -103,6 +103,8 @@ namespace Occtoo.Generic.Inriver.Model.Settings
         /// <summary>
         /// flag entity to be exported on its own when a Full parents merge finds no parent,
         /// instead of being skipped
+        /// the full export also exports the entities it did not reach through a parent,
+        /// e.g. all of them when the parent types are skipped with SkipInFullExport
         /// default value is false
         /// </summary>
         public bool ExportWithoutFullParents { get; set; }
