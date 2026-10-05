@@ -99,5 +99,12 @@ namespace Occtoo.Generic.Inriver.Model.Settings
         /// flag all non-fully merged parents to be updated on entity change
         /// </summary>
         public bool UpdateParentsOnChange { get; set; }
+
+        /// <summary>
+        /// flag entity to be exported on its own when a Full parents merge finds no parent,
+        /// instead of being skipped
+        /// default value is false
+        /// </summary>
+        public bool ExportWithoutFullParents { get; set; }
     }
 }

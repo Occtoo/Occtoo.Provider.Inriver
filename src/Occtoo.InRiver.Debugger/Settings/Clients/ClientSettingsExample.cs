@@ -76,6 +76,8 @@ namespace Occtoo.Generic.Debugger.Settings.Clients
                         /// i.e flattening the information
                         /// Mirroring the settings for Products, so that if an Item is updated
                         /// it will create the same combined datasource as if the Product was updated
+                        /// ExportWithoutFullParents also exports Items that are not linked to a Product,
+                        /// with only the Item's fields, instead of skipping them
                         new EntitySettings
                         {
                             Name = "Item",
@@ -83,6 +85,7 @@ namespace Occtoo.Generic.Debugger.Settings.Clients
                             EntityIdAlias = "ItemEntityId",
                             DataSource = "productitems",
                             UniqueIdFields = new List<string> { "ItemId" },
+                            ExportWithoutFullParents = true,
                             ParentsMerges = new List<MergeSettings>
                             {
                                 new MergeSettings

@@ -134,13 +134,22 @@ namespace Occtoo.Generic.Inriver.Services
                 .Select(x => x.Name).Distinct();
             ExportEntityTypes(baseEntities, dataSources);
 
+            // Types with a Full parents merge are exported through their parents above,
+            // this pass only picks up the entities ExportWithoutFullParents exports on their own
+            var withoutParentsEntityTypes = _settings.ExportSettings.Entities
+                .Where(x => x.ExportWithoutFullParents && x.ParentsMerges.Any(m => m.Type == MergeType.Full) && x.Type != EntityType.Sku && !x.SkipInFullExport)
+                .Select(x => x.Name).Distinct()
+                .Except(mediaEntityTypes)
+                .Except(baseEntities);
+            ExportEntityTypes(withoutParentsEntityTypes, dataSources, HasNoFullParents);
+
             foreach (var dataSource in dataSources)
             {
                 _context.Log(LogLevel.Information, $"Occtoo full export - data source: {dataSource.Key} - sent documents: {dataSource.Value.Sent} - failed documents: {dataSource.Value.Failed} - skipped repeated documents: {dataSource.Value.Skipped}");
             }
         }
 
-        private void ExportEntityTypes(IEnumerable<string> entityTypes, Dictionary<string, DataSourceDocuments> dataSources)
+        private void ExportEntityTypes(IEnumerable<string> entityTypes, Dictionary<string, DataSourceDocuments> dataSources, Func<Entity, bool> include = null)
         {
             foreach (var entityType in entityTypes)
             {
@@ -149,6 +158,11 @@ namespace Occtoo.Generic.Inriver.Services
                 {
                     try
                     {
+                        if (include != null && !include(entity))
+                        {
+                            continue;
+                        }
+
                         _context.Log(LogLevel.Information, $"Occtoo full export - entity type: {entityType} - id: {entity.Id}");
                         var documents = EntityChanged(entity, entity.Id, new List<string>());
                         AddDocuments(documents, dataSources);
@@ -164,6 +178,15 @@ namespace Occtoo.Generic.Inriver.Services
                     SendDocuments(dataSource.Key, dataSource.Value);
                 }
             }
+        }
+
+        private bool HasNoFullParents(Entity entity)
+        {
+            return _settings.ExportSettings.Entities
+                .Where(x => x.Name == entity.EntityType.Id && x.ExportWithoutFullParents)
+                .Any(x => x.ParentsMerges
+                    .Where(m => m.Type == MergeType.Full)
+                    .All(m => !_context.ExtensionManager.DataService.GetInboundLinksForEntityAndLinkType(entity.Id, m.Link).Any()));
         }
 
         private void AddDocuments(List<(DynamicEntity Document, string Type, string EntitySystemIdAlias)> documents, Dictionary<string, DataSourceDocuments> dataSources)
@@ -346,7 +369,8 @@ namespace Occtoo.Generic.Inriver.Services
 
                     var parents = _context.ExtensionManager.GetParentEntities(entity, parentMerge.Link);
 
-                    if (delete && !parents.Any())
+                    // Without a parent the entity can only go on its own: always for a delete, otherwise when the settings ask for it
+                    if (!parents.Any() && (delete || settings.ExportWithoutFullParents))
                     {
                         var entityParents = new EntityParents
                         {
@@ -356,7 +380,10 @@ namespace Occtoo.Generic.Inriver.Services
                             Created = entity.DateCreated,
                             Modified = entity.LastModified
                         };
-                        ExtractDeleteKeyProps(entity, settings.UniqueIdFields, entityParents.DeleteKeyProps);
+                        if (delete)
+                        {
+                            ExtractDeleteKeyProps(entity, settings.UniqueIdFields, entityParents.DeleteKeyProps);
+                        }
                         response.Add(entityParents);
                         continue;
                     }
