@@ -210,8 +210,16 @@ namespace Occtoo.Generic.Inriver
             var groupedDocs = documents.GroupBy(x => x.Type);
             foreach (var group in groupedDocs)
             {
+                // Full merges build the same document from several roots (product, option, item) and parent/link
+                // updates can export an entity more than once, so only send each key once per data source.
+                // Upserts are built from the current inRiver state, so they win over deletes from event data.
+                var uniqueDocuments = group
+                    .Select(x => x.Document)
+                    .GroupBy(x => x.Key)
+                    .Select(x => x.LastOrDefault(d => !d.Delete) ?? x.Last());
+
                 // Send them in batches of 500
-                foreach (var batch in group.Select(x => x.Document).Batch(500))
+                foreach (var batch in uniqueDocuments.Batch(500))
                 {
                     errorKeys.AddRange(documentService.SendDocuments(group.Key, batch.ToList(), group.First().EntitySystemIdAlias));
                 }
