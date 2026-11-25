@@ -100,6 +100,8 @@ namespace Occtoo.Generic.Inriver.Extractors.Factory
 
                 case ExceptionFieldType.CvlKeysMapping:
                     return new CvlKeysMappingExtractor();
+                case ExceptionFieldType.LinkEntityJson:
+                    return new LinkEntityJsonExtractor(_context);
 
                 default:
                     return null;

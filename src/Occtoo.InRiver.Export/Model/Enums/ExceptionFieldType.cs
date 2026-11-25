@@ -166,6 +166,20 @@
         /// Alias => on boarding property name
         /// Params => "onboardingValue1;cvlKey11:cvlKey12:cvlKey13...|onboardingValue2;cvlKey21:cvlKey22.."
         /// </summary>
-        CvlKeysMapping = 25
+        CvlKeysMapping = 25,
+        /// <summary>
+        /// Adds property with data from link entities as a serialized JSON array
+        /// ID => link type id,
+        /// Alias => onboarding property name,
+        /// Params => {"Direction":"Outbound","TargetIdentifierField":"IdentifierFieldId",
+        ///            "Fields":["FieldId1","FieldId2"],
+        ///            "FieldAliases":{"IdentifierFieldId":"identifier","FieldId1":"CustomName"}}
+        /// - Direction: "Outbound" (default) or "Inbound".
+        /// - TargetIdentifierField: Optional field id used to identify the related entity.
+        /// - Fields: List of link entity field ids to include. If null or empty, all link entity fields are included.
+        /// - FieldAliases: Optional mapping of field ids to custom JSON property names,
+        ///   including the target identifier field. Unmapped fields retain their original field ids.
+        /// </summary>
+        LinkEntityJson = 26
     }
 }

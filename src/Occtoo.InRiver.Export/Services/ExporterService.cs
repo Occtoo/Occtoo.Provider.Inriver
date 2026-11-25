@@ -1,10 +1,12 @@
 ﻿using inRiver.Remoting.Extension;
 using inRiver.Remoting.Log;
 using inRiver.Remoting.Objects;
+using Newtonsoft.Json;
 using Occtoo.Generic.Infrastructure.Extensions;
 using Occtoo.Generic.Inriver.Model;
 using Occtoo.Generic.Inriver.Model.Enums;
 using Occtoo.Generic.Inriver.Model.Settings;
+using Occtoo.InRiver.Export.Model.Settings;
 using Occtoo.Onboarding.Sdk.Models;
 using System;
 using System.Collections.Generic;
@@ -44,7 +46,23 @@ namespace Occtoo.Generic.Inriver.Services
         {
             var results = new List<(DynamicEntity Document, string Type, string EntitySystemIdAlias)>();
             var entitySettings = _entitiesService.ReadEntitySettings(entity, fields);
-            if (!entitySettings.Any()) return results;
+
+            if (!entitySettings.Any())
+            {
+                var ownerIds = GetOwnerEntityIdsForLinkEntity(entity);
+
+                foreach (var ownerId in ownerIds)
+                {
+                    var ownerEntity = _context.ExtensionManager.DataService.GetEntity(ownerId, LoadLevel.DataOnly);
+
+                    if (ownerEntity == null)
+                        continue;
+
+                    results.AddRange(EntityChanged(ownerEntity, ownerEntity.Id, new List<string>()));
+                }
+
+                return results;
+            }
 
             if (!deleted)
             {
@@ -103,7 +121,7 @@ namespace Occtoo.Generic.Inriver.Services
             if (updateTarget)
             {
                 var entity = _context.ExtensionManager.DataService.GetEntity(targetId, LoadLevel.DataOnly);
-                if(entity == null)
+                if (entity == null)
                 {
                     _context.Log(LogLevel.Information, $"LinkChange handling hickup entity {targetId} doesn't exist, event skipped");
                     return results;
@@ -314,6 +332,25 @@ namespace Occtoo.Generic.Inriver.Services
                             break;
                     }
                 }
+
+                if (entitySettings.ExceptionFields != null)
+                {
+                    foreach (var exceptionField in entitySettings.ExceptionFields.Where(x => x.Type == ExceptionFieldType.LinkEntityJson && x.Id == linkTypeId))
+                    {
+                        var config = string.IsNullOrWhiteSpace(exceptionField.Params)
+                            ? new LinkEntityJsonSettings()
+                            : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(exceptionField.Params) ?? new LinkEntityJsonSettings();
+
+                        if (string.Equals(config.Direction, "Outbound", StringComparison.OrdinalIgnoreCase))
+                        {
+                            updateSource = true;
+                        }
+                        else if (string.Equals(config.Direction, "Inbound", StringComparison.OrdinalIgnoreCase))
+                        {
+                            updateTarget = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -478,6 +515,71 @@ namespace Occtoo.Generic.Inriver.Services
             public int Failed { get; set; }
 
             public int Skipped { get; set; }
+        }
+
+        private List<int> GetOwnerEntityIdsForLinkEntity(Entity updatedEntity)
+        {
+            var ownerIds = new HashSet<int>();
+
+            var configurations = _settings.ExportSettings.Entities.Where(e => e.ExceptionFields != null)
+                .SelectMany(e => e.ExceptionFields.Where(f =>
+                        f.Type == ExceptionFieldType.LinkEntityJson &&
+                        !string.IsNullOrWhiteSpace(f.Id))
+                    .Select(f => new
+                    {
+                        EntitySettings = e,
+                        ExceptionField = f
+                    })).GroupBy(x => x.ExceptionField.Id);
+
+            foreach (var group in configurations)
+            {
+                var linkTypeId = group.Key;
+
+                // Check the configured link entity type first.
+                if (!IsMatchingLinkEntityType(linkTypeId, updatedEntity.EntityType.Id))
+                    continue;
+
+                // Only one call per link type.
+                var links = _context.ExtensionManager.DataService.GetAllLinksForLinkType(linkTypeId);
+
+                // Find relationships using this link entity.
+                var matchingLinks = links.Where(link => link.LinkEntity?.Id == updatedEntity.Id).ToList();
+
+                if (!matchingLinks.Any())
+                    continue;
+
+                foreach (var configuration in group)
+                {
+                    var settings = configuration.ExceptionField;
+
+                    var config = string.IsNullOrWhiteSpace(settings.Params) ? new LinkEntityJsonSettings()
+                        : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params)
+                          ?? new LinkEntityJsonSettings();
+
+                    var isInbound = string.Equals(config.Direction, "Inbound", StringComparison.OrdinalIgnoreCase);
+
+                    foreach (var link in matchingLinks)
+                    {
+                        var ownerId = isInbound ? link.Target.Id : link.Source.Id;
+
+                        ownerIds.Add(ownerId);
+                    }
+                }
+            }
+
+            return ownerIds.ToList();
+        }
+
+        private bool IsMatchingLinkEntityType(string linkTypeId, string updatedEntityTypeId)
+        {
+            var linkType = _context.ExtensionManager.ModelService.GetLinkType(linkTypeId);
+
+            if (linkType == null || string.IsNullOrEmpty(linkType.LinkEntityTypeId))
+            {
+                return false;
+            }
+
+            return string.Equals(linkType.LinkEntityTypeId, updatedEntityTypeId, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

@@ -108,7 +108,19 @@ namespace Occtoo.Generic.Debugger.Settings.Clients
                                     PropertyAlias = "Media",
                                     LinkUpdateType = LinkUpdateType.UpdateSource
                                 }
-                            }
+                            },
+                            // Example configuration for exporting link entity fields as JSON.
+                            // Uncomment and populate the settings for your link type.
+                            // ExceptionFields = new List<ExceptionFieldSettings>
+                            // {
+                            //     new ExceptionFieldSettings
+                            //     {
+                            //         Id = "", // Link type ID
+                            //         Alias = "", // Occtoo property name
+                            //         Type = ExceptionFieldType.LinkEntityJson,
+                            //         Params = "{\"Direction\":\"\",\"TargetIdentifierField\":\"\",\"Fields\":[],\"FieldAliases\":{}}"
+                            //     }
+                            // }
                         },
                         /// Example setting for the entity Resource in inRiver
                         new EntitySettings
