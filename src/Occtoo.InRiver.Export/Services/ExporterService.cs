@@ -6,7 +6,6 @@ using Occtoo.Generic.Infrastructure.Extensions;
 using Occtoo.Generic.Inriver.Model;
 using Occtoo.Generic.Inriver.Model.Enums;
 using Occtoo.Generic.Inriver.Model.Settings;
-using Occtoo.InRiver.Export.Model.Settings;
 using Occtoo.Onboarding.Sdk.Models;
 using System;
 using System.Collections.Generic;
@@ -25,6 +24,7 @@ namespace Occtoo.Generic.Inriver.Services
     public class ExporterService : IExporterService
     {
         private const int DocumentsBatchSize = 500;
+        private readonly HashSet<string> _linkEntityTypeIds;
 
         private readonly inRiverContext _context;
         private readonly Settings _settings;
@@ -38,6 +38,7 @@ namespace Occtoo.Generic.Inriver.Services
         {
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _linkEntityTypeIds = GetConfiguredLinkEntityTypeIds();
             _entitiesService = entitiesService ?? throw new ArgumentNullException(nameof(entitiesService));
             _documentsService = documentsService ?? throw new ArgumentNullException(nameof(documentsService));
         }
@@ -49,6 +50,9 @@ namespace Occtoo.Generic.Inriver.Services
 
             if (!entitySettings.Any())
             {
+                if (!_linkEntityTypeIds.Contains(entity.EntityType.Id))
+                    return results;
+
                 var ownerIds = GetOwnerEntityIdsForLinkEntity(entity);
 
                 foreach (var ownerId in ownerIds)
@@ -305,6 +309,7 @@ namespace Occtoo.Generic.Inriver.Services
         {
             updateSource = false;
             updateTarget = false;
+
             foreach (var entitySettings in _settings.ExportSettings.Entities)
             {
                 foreach (var mergeSettings in entitySettings.ChildrenMerges.Where(x => x.Link == linkTypeId))
@@ -337,18 +342,18 @@ namespace Occtoo.Generic.Inriver.Services
                 {
                     foreach (var exceptionField in entitySettings.ExceptionFields.Where(x => x.Type == ExceptionFieldType.LinkEntityJson && x.Id == linkTypeId))
                     {
-                        var config = string.IsNullOrWhiteSpace(exceptionField.Params)
-                            ? new LinkEntityJsonSettings()
-                            : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(exceptionField.Params) ?? new LinkEntityJsonSettings();
+                        var config = string.IsNullOrWhiteSpace(exceptionField.Params) ? new LinkEntityJsonSettings() : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(exceptionField.Params) ?? new LinkEntityJsonSettings();
 
-                        if (string.Equals(config.Direction, "Outbound", StringComparison.OrdinalIgnoreCase))
+                        if (!config.TryGetDirection(out var isInbound))
                         {
-                            updateSource = true;
+                            _context.Log(LogLevel.Warning,$"Invalid Direction '{config.Direction}' for LinkEntityJson configuration '{exceptionField.Id}' with alias '{exceptionField.Alias}'. Expected Inbound or Outbound. Skipping configuration.");
+                            continue;
                         }
-                        else if (string.Equals(config.Direction, "Inbound", StringComparison.OrdinalIgnoreCase))
-                        {
+
+                        if (isInbound)
                             updateTarget = true;
-                        }
+                        else
+                            updateSource = true;
                     }
                 }
             }
@@ -521,42 +526,39 @@ namespace Occtoo.Generic.Inriver.Services
         {
             var ownerIds = new HashSet<int>();
 
-            var configurations = _settings.ExportSettings.Entities.Where(e => e.ExceptionFields != null)
-                .SelectMany(e => e.ExceptionFields.Where(f =>
+            var configurations = _settings.ExportSettings.Entities
+                .Where(e => e.ExceptionFields != null)
+                .SelectMany(e => e.ExceptionFields
+                    .Where(f =>
                         f.Type == ExceptionFieldType.LinkEntityJson &&
-                        !string.IsNullOrWhiteSpace(f.Id))
-                    .Select(f => new
-                    {
-                        EntitySettings = e,
-                        ExceptionField = f
-                    })).GroupBy(x => x.ExceptionField.Id);
+                        !string.IsNullOrWhiteSpace(f.Id)))
+                .GroupBy(f => f.Id)
+                .ToList();
+
+            if (!configurations.Any())
+                return ownerIds.ToList();
+
+            var links = _context.ExtensionManager.DataService.GetLinksForLinkEntity(updatedEntity.Id);
+
+            if (links == null || !links.Any())
+                return ownerIds.ToList();
 
             foreach (var group in configurations)
             {
-                var linkTypeId = group.Key;
-
-                // Check the configured link entity type first.
-                if (!IsMatchingLinkEntityType(linkTypeId, updatedEntity.EntityType.Id))
-                    continue;
-
-                // Only one call per link type.
-                var links = _context.ExtensionManager.DataService.GetAllLinksForLinkType(linkTypeId);
-
-                // Find relationships using this link entity.
-                var matchingLinks = links.Where(link => link.LinkEntity?.Id == updatedEntity.Id).ToList();
+                var matchingLinks = links.Where(link => link.LinkType.Id == group.Key).ToList();
 
                 if (!matchingLinks.Any())
                     continue;
 
-                foreach (var configuration in group)
+                foreach (var settings in group)
                 {
-                    var settings = configuration.ExceptionField;
+                    var config = string.IsNullOrWhiteSpace(settings.Params) ? new LinkEntityJsonSettings() : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params) ?? new LinkEntityJsonSettings();
 
-                    var config = string.IsNullOrWhiteSpace(settings.Params) ? new LinkEntityJsonSettings()
-                        : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params)
-                          ?? new LinkEntityJsonSettings();
-
-                    var isInbound = string.Equals(config.Direction, "Inbound", StringComparison.OrdinalIgnoreCase);
+                    if (!config.TryGetDirection(out var isInbound))
+                    {
+                        _context.Log(LogLevel.Warning,$"Invalid Direction '{config.Direction}' for LinkEntityJson configuration '{settings.Id}' with alias '{settings.Alias}'. Expected Inbound or Outbound. Skipping configuration.");
+                        continue;
+                    }
 
                     foreach (var link in matchingLinks)
                     {
@@ -570,16 +572,30 @@ namespace Occtoo.Generic.Inriver.Services
             return ownerIds.ToList();
         }
 
-        private bool IsMatchingLinkEntityType(string linkTypeId, string updatedEntityTypeId)
+        private HashSet<string> GetConfiguredLinkEntityTypeIds()
         {
-            var linkType = _context.ExtensionManager.ModelService.GetLinkType(linkTypeId);
+            var linkEntityTypeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            if (linkType == null || string.IsNullOrEmpty(linkType.LinkEntityTypeId))
+            var linkTypeIds = _settings.ExportSettings.Entities
+                .Where(e => e.ExceptionFields != null)
+                .SelectMany(e => e.ExceptionFields)
+                .Where(f =>
+                    f.Type == ExceptionFieldType.LinkEntityJson &&
+                    !string.IsNullOrWhiteSpace(f.Id))
+                .Select(f => f.Id)
+                .Distinct();
+
+            foreach (var linkTypeId in linkTypeIds)
             {
-                return false;
+                var linkType = _context.ExtensionManager.ModelService.GetLinkType(linkTypeId);
+
+                if (!string.IsNullOrWhiteSpace(linkType?.LinkEntityTypeId))
+                {
+                    linkEntityTypeIds.Add(linkType.LinkEntityTypeId);
+                }
             }
 
-            return string.Equals(linkType.LinkEntityTypeId, updatedEntityTypeId, StringComparison.OrdinalIgnoreCase);
+            return linkEntityTypeIds;
         }
     }
 }

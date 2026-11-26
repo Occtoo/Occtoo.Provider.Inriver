@@ -118,7 +118,7 @@ namespace Occtoo.Generic.Debugger.Settings.Clients
                             //         Id = "", // Link type ID
                             //         Alias = "", // Occtoo property name
                             //         Type = ExceptionFieldType.LinkEntityJson,
-                            //         Params = "{\"Direction\":\"\",\"TargetIdentifierField\":\"\",\"Fields\":[],\"FieldAliases\":{}}"
+                            //         Params = "{\"Direction\":\"Outbound\",\"TargetIdentifierField\":\"\",\"Fields\":[],\"FieldAliases\":{}}"
                             //     }
                             // }
                         },

@@ -4,12 +4,12 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Occtoo.Generic.Inriver.Extractors.Interfaces;
 using Occtoo.Generic.Inriver.Model.Settings;
-using Occtoo.InRiver.Export.Model.Settings;
 using Occtoo.Onboarding.Sdk.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using Occtoo.Generic.Infrastructure.Extensions;
+using inRiver.Remoting.Log;
 
 namespace Occtoo.Generic.Inriver.Extractors
 {
@@ -24,35 +24,21 @@ namespace Occtoo.Generic.Inriver.Extractors
 
         public void Extract(DynamicEntity dynamicEntity, Entity inRiverEntity, ExceptionFieldSettings settings)
         {
-            var config = JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params);
+            var config = string.IsNullOrWhiteSpace(settings.Params) ? new LinkEntityJsonSettings() : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params) ?? new LinkEntityJsonSettings();
 
-            if (config == null)
-                throw new ArgumentException("Missing LinkEntityJson configuration.");
+            if (!config.TryGetDirection(out var isInbound))
+            {
+                _context.Logger?.Log(LogLevel.Warning, $"Invalid Direction '{config.Direction}' for LinkEntityJson configuration '{settings.Id}' with alias '{settings.Alias}'. Expected Inbound or Outbound. Skipping extraction.");
+                return;
+            }
 
             var dataService = _context.ExtensionManager.DataService;
-
-            List<Link> links;
-
-            if (string.Equals(config.Direction, "Inbound", StringComparison.OrdinalIgnoreCase))
-            {
-                links = dataService.GetInboundLinksForEntityAndLinkType(inRiverEntity.Id, settings.Id).ToList();
-            }
-            else if (string.Equals(config.Direction, "Outbound", StringComparison.OrdinalIgnoreCase))
-            {
-                links = dataService.GetOutboundLinksForEntityAndLinkType(inRiverEntity.Id, settings.Id).ToList();
-            }
-            else
-            {
-                throw new ArgumentException("Direction must be Inbound or Outbound.");
-            }
-
+            var links = isInbound ? dataService.GetInboundLinksForEntityAndLinkType(inRiverEntity.Id, settings.Id).ToList() : dataService.GetOutboundLinksForEntityAndLinkType(inRiverEntity.Id, settings.Id).ToList();
             var orderedLinks = links.Where(l => !l.Inactive).OrderBy(l => l.Id).ToList();
             var linkEntityIds = orderedLinks.Where(l => l.LinkEntity != null).Select(l => l.LinkEntity.Id);
             var linkEntities = GetEntitiesById(linkEntityIds);
-            var isInbound = string.Equals(config.Direction, "Inbound", StringComparison.OrdinalIgnoreCase);
-            var relatedEntities = !string.IsNullOrWhiteSpace(config.TargetIdentifierField) ? GetEntitiesById(orderedLinks.Select(l => isInbound
-                    ? l.Source.Id : l.Target.Id)) : new Dictionary<int, Entity>();
 
+            var relatedEntities = !string.IsNullOrWhiteSpace(config.TargetIdentifierField) ? GetEntitiesById(orderedLinks.Select(l => isInbound ? l.Source.Id : l.Target.Id)) : new Dictionary<int, Entity>();
             var results = new List<Dictionary<string, object>>();
 
             foreach (var link in orderedLinks)
@@ -65,9 +51,7 @@ namespace Occtoo.Generic.Inriver.Extractors
 
                 var result = new Dictionary<string, object>();
 
-                var relatedEntityId = isInbound
-                    ? link.Source.Id
-                    : link.Target.Id;
+                var relatedEntityId = isInbound ? link.Source.Id : link.Target.Id;
 
                 if (!string.IsNullOrWhiteSpace(config.TargetIdentifierField))
                 {

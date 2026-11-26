@@ -1,6 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 
-namespace Occtoo.InRiver.Export.Model.Settings
+namespace Occtoo.Generic.Inriver.Model.Settings
 {
     public class LinkEntityJsonSettings
     {
@@ -13,5 +14,26 @@ namespace Occtoo.InRiver.Export.Model.Settings
 
         //Possibility to override the fieldTypeIds and replace them with other aliases.
         public Dictionary<string, string> FieldAliases { get; set; }
+
+        public bool TryGetDirection(out bool isInbound)
+        {
+            isInbound = false;
+
+            if (string.IsNullOrWhiteSpace(Direction))
+                return true;
+
+            var direction = Direction.Trim();
+
+            if (string.Equals(direction, "Outbound", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (string.Equals(direction, "Inbound", StringComparison.OrdinalIgnoreCase))
+            {
+                isInbound = true;
+                return true;
+            }
+
+            return false;
+        }
     }
 }
