@@ -1,6 +1,7 @@
 ﻿using inRiver.Remoting.Extension;
 using inRiver.Remoting.Log;
 using inRiver.Remoting.Objects;
+using Newtonsoft.Json;
 using Occtoo.Generic.Infrastructure.Extensions;
 using Occtoo.Generic.Inriver.Model;
 using Occtoo.Generic.Inriver.Model.Enums;
@@ -23,6 +24,7 @@ namespace Occtoo.Generic.Inriver.Services
     public class ExporterService : IExporterService
     {
         private const int DocumentsBatchSize = 500;
+        private readonly HashSet<string> _linkEntityTypeIds;
 
         private readonly inRiverContext _context;
         private readonly Settings _settings;
@@ -36,6 +38,7 @@ namespace Occtoo.Generic.Inriver.Services
         {
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _linkEntityTypeIds = GetConfiguredLinkEntityTypeIds();
             _entitiesService = entitiesService ?? throw new ArgumentNullException(nameof(entitiesService));
             _documentsService = documentsService ?? throw new ArgumentNullException(nameof(documentsService));
         }
@@ -44,7 +47,26 @@ namespace Occtoo.Generic.Inriver.Services
         {
             var results = new List<(DynamicEntity Document, string Type, string EntitySystemIdAlias)>();
             var entitySettings = _entitiesService.ReadEntitySettings(entity, fields);
-            if (!entitySettings.Any()) return results;
+
+            if (!entitySettings.Any())
+            {
+                if (!_linkEntityTypeIds.Contains(entity.EntityType.Id))
+                    return results;
+
+                var ownerIds = GetOwnerEntityIdsForLinkEntity(entity);
+
+                foreach (var ownerId in ownerIds)
+                {
+                    var ownerEntity = _context.ExtensionManager.DataService.GetEntity(ownerId, LoadLevel.DataOnly);
+
+                    if (ownerEntity == null)
+                        continue;
+
+                    results.AddRange(EntityChanged(ownerEntity, ownerEntity.Id, new List<string>()));
+                }
+
+                return results;
+            }
 
             if (!deleted)
             {
@@ -103,7 +125,7 @@ namespace Occtoo.Generic.Inriver.Services
             if (updateTarget)
             {
                 var entity = _context.ExtensionManager.DataService.GetEntity(targetId, LoadLevel.DataOnly);
-                if(entity == null)
+                if (entity == null)
                 {
                     _context.Log(LogLevel.Information, $"LinkChange handling hickup entity {targetId} doesn't exist, event skipped");
                     return results;
@@ -287,6 +309,7 @@ namespace Occtoo.Generic.Inriver.Services
         {
             updateSource = false;
             updateTarget = false;
+
             foreach (var entitySettings in _settings.ExportSettings.Entities)
             {
                 foreach (var mergeSettings in entitySettings.ChildrenMerges.Where(x => x.Link == linkTypeId))
@@ -312,6 +335,29 @@ namespace Occtoo.Generic.Inriver.Services
                         case LinkUpdateType.UpdateTarget:
                             updateTarget = true;
                             break;
+                    }
+                }
+
+                if (entitySettings.ExceptionFields != null)
+                {
+                    foreach (var exceptionField in entitySettings.ExceptionFields.Where(x => x.Type == ExceptionFieldType.LinkEntityJson && x.Id == linkTypeId))
+                    {
+                        if (!LinkEntityJsonSettings.TryParse(exceptionField.Params, out var config))
+                        {
+                            _context.Log(LogLevel.Warning, $"Invalid Params JSON for LinkEntityJson configuration '{exceptionField.Id}' with alias '{exceptionField.Alias}'. Skipping configuration.");
+                            continue;
+                        }
+
+                        if (!config.TryGetDirection(out var isInbound))
+                        {
+                            _context.Log(LogLevel.Warning,$"Invalid Direction '{config.Direction}' for LinkEntityJson configuration '{exceptionField.Id}' with alias '{exceptionField.Alias}'. Expected Inbound or Outbound. Skipping configuration.");
+                            continue;
+                        }
+
+                        if (isInbound)
+                            updateTarget = true;
+                        else
+                            updateSource = true;
                     }
                 }
             }
@@ -478,6 +524,86 @@ namespace Occtoo.Generic.Inriver.Services
             public int Failed { get; set; }
 
             public int Skipped { get; set; }
+        }
+
+        private List<int> GetOwnerEntityIdsForLinkEntity(Entity updatedEntity)
+        {
+            var ownerIds = new HashSet<int>();
+
+            var configurations = _settings.ExportSettings.Entities
+                .Where(e => e.ExceptionFields != null)
+                .SelectMany(e => e.ExceptionFields
+                    .Where(f =>
+                        f.Type == ExceptionFieldType.LinkEntityJson &&
+                        !string.IsNullOrWhiteSpace(f.Id)))
+                .GroupBy(f => f.Id)
+                .ToList();
+
+            if (!configurations.Any())
+                return ownerIds.ToList();
+
+            var links = _context.ExtensionManager.DataService.GetLinksForLinkEntity(updatedEntity.Id);
+
+            if (links == null || !links.Any())
+                return ownerIds.ToList();
+
+            foreach (var group in configurations)
+            {
+                var matchingLinks = links.Where(link => link.LinkType.Id == group.Key).ToList();
+
+                if (!matchingLinks.Any())
+                    continue;
+
+                foreach (var settings in group)
+                {
+                    if (!LinkEntityJsonSettings.TryParse(settings.Params, out var config))
+                    {
+                        _context.Log(LogLevel.Warning, $"Invalid Params JSON for LinkEntityJson configuration '{settings.Id}' with alias '{settings.Alias}'. Skipping configuration.");
+                        continue;
+                    }
+
+                    if (!config.TryGetDirection(out var isInbound))
+                    {
+                        _context.Log(LogLevel.Warning,$"Invalid Direction '{config.Direction}' for LinkEntityJson configuration '{settings.Id}' with alias '{settings.Alias}'. Expected Inbound or Outbound. Skipping configuration.");
+                        continue;
+                    }
+
+                    foreach (var link in matchingLinks)
+                    {
+                        var ownerId = isInbound ? link.Target.Id : link.Source.Id;
+
+                        ownerIds.Add(ownerId);
+                    }
+                }
+            }
+
+            return ownerIds.ToList();
+        }
+
+        private HashSet<string> GetConfiguredLinkEntityTypeIds()
+        {
+            var linkEntityTypeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var linkTypeIds = _settings.ExportSettings.Entities
+                .Where(e => e.ExceptionFields != null)
+                .SelectMany(e => e.ExceptionFields)
+                .Where(f =>
+                    f.Type == ExceptionFieldType.LinkEntityJson &&
+                    !string.IsNullOrWhiteSpace(f.Id))
+                .Select(f => f.Id)
+                .Distinct();
+
+            foreach (var linkTypeId in linkTypeIds)
+            {
+                var linkType = _context.ExtensionManager.ModelService.GetLinkType(linkTypeId);
+
+                if (!string.IsNullOrWhiteSpace(linkType?.LinkEntityTypeId))
+                {
+                    linkEntityTypeIds.Add(linkType.LinkEntityTypeId);
+                }
+            }
+
+            return linkEntityTypeIds;
         }
     }
 }
