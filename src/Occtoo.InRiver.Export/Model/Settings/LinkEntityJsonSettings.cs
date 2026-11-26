@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 
 namespace Occtoo.Generic.Inriver.Model.Settings
@@ -14,6 +15,26 @@ namespace Occtoo.Generic.Inriver.Model.Settings
 
         //Possibility to override the fieldTypeIds and replace them with other aliases.
         public Dictionary<string, string> FieldAliases { get; set; }
+
+        public static bool TryParse(string json, out LinkEntityJsonSettings settings)
+        {
+            settings = new LinkEntityJsonSettings();
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return true;
+            }
+
+            try
+            {
+                settings = JsonConvert.DeserializeObject<LinkEntityJsonSettings>(json) ?? new LinkEntityJsonSettings();
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
 
         public bool TryGetDirection(out bool isInbound)
         {

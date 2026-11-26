@@ -342,7 +342,11 @@ namespace Occtoo.Generic.Inriver.Services
                 {
                     foreach (var exceptionField in entitySettings.ExceptionFields.Where(x => x.Type == ExceptionFieldType.LinkEntityJson && x.Id == linkTypeId))
                     {
-                        var config = string.IsNullOrWhiteSpace(exceptionField.Params) ? new LinkEntityJsonSettings() : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(exceptionField.Params) ?? new LinkEntityJsonSettings();
+                        if (!LinkEntityJsonSettings.TryParse(exceptionField.Params, out var config))
+                        {
+                            _context.Log(LogLevel.Warning, $"Invalid Params JSON for LinkEntityJson configuration '{exceptionField.Id}' with alias '{exceptionField.Alias}'. Skipping configuration.");
+                            continue;
+                        }
 
                         if (!config.TryGetDirection(out var isInbound))
                         {
@@ -552,7 +556,11 @@ namespace Occtoo.Generic.Inriver.Services
 
                 foreach (var settings in group)
                 {
-                    var config = string.IsNullOrWhiteSpace(settings.Params) ? new LinkEntityJsonSettings() : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params) ?? new LinkEntityJsonSettings();
+                    if (!LinkEntityJsonSettings.TryParse(settings.Params, out var config))
+                    {
+                        _context.Log(LogLevel.Warning, $"Invalid Params JSON for LinkEntityJson configuration '{settings.Id}' with alias '{settings.Alias}'. Skipping configuration.");
+                        continue;
+                    }
 
                     if (!config.TryGetDirection(out var isInbound))
                     {

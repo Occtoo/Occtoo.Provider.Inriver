@@ -24,7 +24,11 @@ namespace Occtoo.Generic.Inriver.Extractors
 
         public void Extract(DynamicEntity dynamicEntity, Entity inRiverEntity, ExceptionFieldSettings settings)
         {
-            var config = string.IsNullOrWhiteSpace(settings.Params) ? new LinkEntityJsonSettings() : JsonConvert.DeserializeObject<LinkEntityJsonSettings>(settings.Params) ?? new LinkEntityJsonSettings();
+            if (!LinkEntityJsonSettings.TryParse(settings.Params, out var config))
+            {
+                _context.Logger?.Log(LogLevel.Warning, $"Invalid Params JSON for LinkEntityJson configuration '{settings.Id}' with alias '{settings.Alias}'. Skipping extraction.");
+                return;
+            }
 
             if (!config.TryGetDirection(out var isInbound))
             {
